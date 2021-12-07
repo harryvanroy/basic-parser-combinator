@@ -4,6 +4,7 @@ module Main where
 
 import Control.Applicative (Alternative (empty, many, some, (<|>)))
 import Data.Char (isAlpha, isAlphaNum, isDigit, isLower, isSpace, isUpper, toUpper)
+import Data.List (intercalate)
 import System.Environment (getArgs)
 
 type Input = String
@@ -181,8 +182,24 @@ parseJsonFile filePath = do
     Nothing -> error "parse error"
     Just (v, _) -> return v
 
+showJsonValue :: JsonValue -> String
+showJsonValue jv = case jv of
+  JsonNumber n -> show n
+  JsonString s -> addQuotes s
+  JsonBool b -> if b then "true" else "false"
+  JsonNull -> "null"
+  JsonArray xs -> "[" ++ intercalate "," (map showJsonValue xs) ++ "]"
+  JsonObject kvs ->
+    "{\n\t"
+      ++ intercalate
+        ",\n"
+        (map (\(k, v) -> addQuotes k ++ ": " ++ showJsonValue v) kvs)
+      ++ "\n}"
+  where
+    addQuotes s = "\"" ++ s ++ "\""
+
 main :: IO ()
 main = do
   args <- getArgs
-  result <- parseJsonFile $ head args
-  print result
+  jsonResult <- parseJsonFile $ head args
+  writeFile (head args) (showJsonValue jsonResult)
