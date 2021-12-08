@@ -10,11 +10,11 @@ import Data.List (intercalate, sortOn)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 
-newtype Parser a = Parser {runParser :: Input -> Either ParserError (a, Input)}
-
 data Input = Input {inputLoc :: Int, inputStr :: String} deriving (Show, Eq)
 
 data ParserError = ParserError String Int deriving (Show)
+
+newtype Parser a = Parser {runParser :: Input -> Either ParserError (a, Input)}
 
 data JsonValue
   = JsonNull
@@ -96,12 +96,12 @@ withError p msg inp = case runParser p inp of
   Right (value, rest) -> Right (value, rest)
 
 charP :: Char -> Parser Char
-charP x =
+charP c =
   Parser
     ( \inp ->
         withError
-          (satP (== x))
-          ("Expected char " ++ [x] ++ " but found " ++ inputStr inp)
+          (satP (== c))
+          ("Expected char " ++ show c ++ " but found " ++ inputStr inp)
           inp
     )
 
@@ -130,9 +130,9 @@ intP =
 withSpace :: Parser a -> Parser a
 withSpace p = do
   many (satP isSpace)
-  v <- p
+  x <- p
   many (satP isSpace)
-  return v
+  return x
 
 sepBy' :: Parser a -> Parser b -> Parser [b]
 sepBy' sep p = do
@@ -202,25 +202,25 @@ addQuotes :: String -> String
 addQuotes s = "\"" ++ s ++ "\""
 
 indent :: Int -> String
-indent n = replicate (n * 2) ' '
+indent lvl = replicate (lvl * 2) ' '
 
 showJsonValue :: Int -> JsonValue -> String
 showJsonValue _ (JsonNumber n) = show n
 showJsonValue _ (JsonString s) = addQuotes s
 showJsonValue _ (JsonBool b) = if b then "true" else "false"
 showJsonValue _ JsonNull = "null"
-showJsonValue i (JsonArray xs) =
+showJsonValue lvl (JsonArray xs) =
   enclose
     ("[", "]")
-    (indent i)
-    (intercalate ",\n" (map ((indent (i + 1) ++) . showJsonValue (i + 1)) xs))
-showJsonValue i (JsonObject kvs) =
+    (indent lvl)
+    (intercalate ",\n" (map ((indent (lvl + 1) ++) . showJsonValue (lvl + 1)) xs))
+showJsonValue lvl (JsonObject kvs) =
   enclose
     ("{", "}")
-    (indent i)
-    (intercalate ",\n" (map (showKeyValue (i + 1)) kvs))
+    (indent lvl)
+    (intercalate ",\n" (map (showKeyValue (lvl + 1)) kvs))
   where
-    showKeyValue i (k, v) = indent i ++ addQuotes k ++ ": " ++ showJsonValue i v
+    showKeyValue lvl (k, v) = indent lvl ++ addQuotes k ++ ": " ++ showJsonValue lvl v
 
 sortKeys :: JsonValue -> JsonValue
 sortKeys JsonNull = JsonNull
