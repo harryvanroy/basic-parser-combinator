@@ -4,13 +4,17 @@ module Main where
 
 import Control.Applicative (Alternative (empty, many, some, (<|>)))
 import Control.Monad.State (State, evalState, get, put)
+import Data.Bifunctor (second)
 import Data.Char (isAlpha, isAlphaNum, isDigit, isLower, isSpace, isUpper, toUpper)
-import Data.List (intercalate)
+import Data.List (intercalate, sortOn)
 import System.Environment (getArgs)
+import System.Exit (exitFailure)
 
-type Input = String
+newtype Parser a = Parser {runParser :: Input -> Either ParserError (a, Input)}
 
-newtype Parser a = Parser {runParser :: Input -> Maybe (a, Input)}
+data Input = Input {inputLoc :: Int, inputStr :: String} deriving (Show, Eq)
+
+data ParserError = ParserError String Int deriving (Show)
 
 data JsonValue
   = JsonNull
@@ -26,20 +30,20 @@ instance Functor Parser where
   fmap f p =
     Parser
       ( \inp -> case runParser p inp of
-          Nothing -> Nothing
-          Just (a, rest) -> Just (f a, rest)
+          Left error -> Left error
+          Right (value, rest) -> Right (f value, rest)
       )
 
 instance Applicative Parser where
   -- pure :: a -> Parser a
-  pure a = Parser (\inp -> Just (a, inp))
+  pure a = Parser (\inp -> Right (a, inp))
 
   -- <*> :: Parser (a -> b) -> Parser a -> Parser b
   pf <*> pa =
     Parser
       ( \inp -> case runParser pf inp of
-          Nothing -> Nothing
-          Just (f, rest) -> runParser (f <$> pa) rest
+          Left error -> Left error
+          Right (f, rest) -> runParser (f <$> pa) rest
       )
 
 instance Monad Parser where
@@ -47,53 +51,69 @@ instance Monad Parser where
   p >>= f =
     Parser
       ( \inp -> case runParser p inp of
-          Nothing -> Nothing
-          Just (a, rest) -> runParser (f a) rest
+          Left error -> Left error
+          Right (value, rest) -> runParser (f value) rest
       )
 
 instance Alternative Parser where
   -- empty :: Parser a
-  empty = Parser (const Nothing)
+  empty = Parser (const $ Left (ParserError "empty" 0))
 
   -- (<|>) :: Parser a -> Parser a -> Parser a
   p <|> q =
     Parser
       ( \inp -> case runParser p inp of
-          Nothing -> runParser q inp
-          Just (a, rest) -> Just (a, rest)
+          Left _ -> runParser q inp
+          Right (value, rest) -> Right (value, rest)
       )
 
 itemP :: Parser Char
 itemP =
   Parser
     ( \case
-        [] -> Nothing
-        (c : cs) -> Just (c, cs)
+        Input loc [] -> Left (ParserError "Unexpected end of string" loc)
+        Input loc (c : cs) -> Right (c, Input (loc + 1) cs)
     )
 
 satP :: (Char -> Bool) -> Parser Char
 satP p = do
   x <- itemP
-  if p x then return x else empty
+  if p x
+    then return x
+    else Parser (\(Input loc _) -> Left (ParserError "Failed predicate" loc))
 
 digitP :: Parser Char
-digitP = satP isDigit
+digitP =
+  Parser
+    ( \inp -> case runParser (satP isDigit) inp of
+        Left _ -> Left (ParserError ("Expected a digit but found " ++ inputStr inp) (inputLoc inp))
+        Right (value, rest) -> Right (value, rest)
+    )
+
+withError :: Parser a -> String -> Input -> Either ParserError (a, Input)
+withError p msg inp = case runParser p inp of
+  Left _ -> Left (ParserError msg (inputLoc inp))
+  Right (value, rest) -> Right (value, rest)
 
 charP :: Char -> Parser Char
-charP x = satP (== x)
+charP x =
+  Parser
+    ( \inp ->
+        withError
+          (satP (== x))
+          ("Expected char " ++ [x] ++ " but found " ++ inputStr inp)
+          inp
+    )
 
 stringP :: String -> Parser String
-stringP [] = empty
-stringP (x : xs) = do
-  charP x
-  stringP xs
-  return (x : xs)
-
-natP :: Parser Int
-natP =
-  do
-    xs <- some digitP
-    return (read xs)
+stringP s =
+  Parser
+    ( \inp ->
+        withError
+          (traverse charP s)
+          ("Expected string " ++ s ++ " but found " ++ inputStr inp)
+          inp
+    )
 
 intP :: Parser Int
 intP =
@@ -102,17 +122,16 @@ intP =
     n <- natP
     return (- n)
     <|> natP
-
-spaceP :: Parser ()
-spaceP = do
-  many (satP isSpace)
-  return ()
+  where
+    natP = do
+      xs <- some digitP
+      return (read xs)
 
 withSpace :: Parser a -> Parser a
 withSpace p = do
-  spaceP
+  many (satP isSpace)
   v <- p
-  spaceP
+  many (satP isSpace)
   return v
 
 sepBy' :: Parser a -> Parser b -> Parser [b]
@@ -174,7 +193,7 @@ jsonValueP =
     <|> jsonObjectP
 
 jsonP :: Parser JsonValue
-jsonP = withSpace $ jsonObjectP <|> jsonArrayP
+jsonP = withSpace $ jsonArrayP <|> jsonObjectP
 
 enclose :: (String, String) -> String -> String -> String
 enclose brace ind s = fst brace ++ "\n" ++ s ++ "\n" ++ ind ++ snd brace
@@ -203,15 +222,23 @@ showJsonValue i (JsonObject kvs) =
   where
     showKeyValue i (k, v) = indent i ++ addQuotes k ++ ": " ++ showJsonValue i v
 
+sortKeys :: JsonValue -> JsonValue
+sortKeys JsonNull = JsonNull
+sortKeys b@(JsonBool _) = b
+sortKeys s@(JsonString _) = s
+sortKeys n@(JsonNumber _) = n
+sortKeys (JsonArray xs) = JsonArray $ sortKeys <$> xs
+sortKeys (JsonObject kvs) = JsonObject $ sortOn fst $ second sortKeys <$> kvs
+
 parseJsonFile :: FilePath -> IO JsonValue
 parseJsonFile filePath = do
-  x <- readFile filePath
-  case runParser jsonP x of
-    Nothing -> error "parse error"
-    Just (v, _) -> return v
+  fileContents <- readFile filePath
+  case runParser jsonP (Input 0 fileContents) of
+    Left (ParserError msg loc) -> putStrLn ("Parser failed at char " ++ show loc ++ ": " ++ msg) >> exitFailure
+    Right (v, _) -> return $ sortKeys v
 
 main :: IO ()
 main = do
   args <- getArgs
   jsonResult <- parseJsonFile $ head args
-  writeFile "tmp.json" (showJsonValue 0 jsonResult)
+  writeFile (head args) (showJsonValue 0 jsonResult)
