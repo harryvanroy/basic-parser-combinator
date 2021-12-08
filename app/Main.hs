@@ -176,17 +176,19 @@ jsonValueP =
 jsonP :: Parser JsonValue
 jsonP = withSpace $ jsonObjectP <|> jsonArrayP
 
-parseJsonFile :: FilePath -> IO JsonValue
-parseJsonFile filePath = do
-  x <- readFile filePath
-  case runParser jsonP x of
-    Nothing -> error "parse error"
-    Just (v, _) -> return v
+enclose :: (String, String) -> String -> String -> String
+enclose brace ind s = fst brace ++ "\n" ++ s ++ "\n" ++ ind ++ snd brace
+
+addQuotes :: String -> String
+addQuotes s = "\"" ++ s ++ "\""
+
+indent :: Int -> String
+indent n = replicate (n * 2) ' '
 
 showJsonValue :: Int -> JsonValue -> String
-showJsonValue i (JsonNumber n) = show n
-showJsonValue i (JsonString s) = addQuotes s
-showJsonValue i (JsonBool b) = if b then "true" else "false"
+showJsonValue _ (JsonNumber n) = show n
+showJsonValue _ (JsonString s) = addQuotes s
+showJsonValue _ (JsonBool b) = if b then "true" else "false"
 showJsonValue _ JsonNull = "null"
 showJsonValue i (JsonArray xs) =
   enclose
@@ -201,14 +203,12 @@ showJsonValue i (JsonObject kvs) =
   where
     showKeyValue i (k, v) = indent i ++ addQuotes k ++ ": " ++ showJsonValue i v
 
-enclose :: (String, String) -> String -> String -> String
-enclose brace ind s = fst brace ++ "\n" ++ s ++ "\n" ++ ind ++ snd brace
-
-addQuotes :: String -> String
-addQuotes s = "\"" ++ s ++ "\""
-
-indent :: Int -> String
-indent n = replicate (n * 2) ' '
+parseJsonFile :: FilePath -> IO JsonValue
+parseJsonFile filePath = do
+  x <- readFile filePath
+  case runParser jsonP x of
+    Nothing -> error "parse error"
+    Just (v, _) -> return v
 
 main :: IO ()
 main = do
