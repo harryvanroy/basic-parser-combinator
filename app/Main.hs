@@ -3,6 +3,7 @@
 module Main where
 
 import Control.Applicative (Alternative (empty, many, some, (<|>)))
+import Control.Monad.State (State, evalState, get, put)
 import Data.Char (isAlpha, isAlphaNum, isDigit, isLower, isSpace, isUpper, toUpper)
 import Data.List (intercalate)
 import System.Environment (getArgs)
@@ -182,24 +183,35 @@ parseJsonFile filePath = do
     Nothing -> error "parse error"
     Just (v, _) -> return v
 
-showJsonValue :: JsonValue -> String
-showJsonValue jv = case jv of
-  JsonNumber n -> show n
-  JsonString s -> addQuotes s
-  JsonBool b -> if b then "true" else "false"
-  JsonNull -> "null"
-  JsonArray xs -> "[" ++ intercalate "," (map showJsonValue xs) ++ "]"
-  JsonObject kvs ->
-    "{\n\t"
-      ++ intercalate
-        ",\n"
-        (map (\(k, v) -> addQuotes k ++ ": " ++ showJsonValue v) kvs)
-      ++ "\n}"
+showJsonValue :: Int -> JsonValue -> String
+showJsonValue i (JsonNumber n) = show n
+showJsonValue i (JsonString s) = addQuotes s
+showJsonValue i (JsonBool b) = if b then "true" else "false"
+showJsonValue _ JsonNull = "null"
+showJsonValue i (JsonArray xs) =
+  enclose
+    ("[", "]")
+    (indent i)
+    (intercalate ",\n" (map ((indent (i + 1) ++) . showJsonValue (i + 1)) xs))
+showJsonValue i (JsonObject kvs) =
+  enclose
+    ("{", "}")
+    (indent i)
+    (intercalate ",\n" (map (showKeyValue (i + 1)) kvs))
   where
-    addQuotes s = "\"" ++ s ++ "\""
+    showKeyValue i (k, v) = indent i ++ addQuotes k ++ ": " ++ showJsonValue i v
+
+enclose :: (String, String) -> String -> String -> String
+enclose brace ind s = fst brace ++ "\n" ++ s ++ "\n" ++ ind ++ snd brace
+
+addQuotes :: String -> String
+addQuotes s = "\"" ++ s ++ "\""
+
+indent :: Int -> String
+indent n = replicate (n * 2) ' '
 
 main :: IO ()
 main = do
   args <- getArgs
   jsonResult <- parseJsonFile $ head args
-  writeFile (head args) (showJsonValue jsonResult)
+  writeFile "tmp.json" (showJsonValue 0 jsonResult)
