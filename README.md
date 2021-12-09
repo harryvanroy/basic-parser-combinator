@@ -5,7 +5,7 @@ project served as a way for me to learn more about functional parsing.
 
 ### Features
 
-- Formatted JSON with proper indendation and sorted keys.
+- Formatted JSON with indendation and sorted keys.
 
 ### Usage
 
